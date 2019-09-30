@@ -87,19 +87,19 @@ packagesCmp xs ys =
 
 formatEntry :: Entry -> String
 formatEntry Entry {..} =
-    indent $ header ++ description ++ "\n"
+    indent $ header ++ "\n" ++ description ++ "\n"
   where
     indent = unlines . indent' . lines
     indent' []     = []
     indent' (x:xs) = ("- " ++ x) : map ("  " ++) xs
 
-    header = unlines $
+    header = unwords $
         [ pkgs ++ entrySynopsis
         ] ++
-        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/issues/" ++ show n
+        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/issues/" ++ show n ++ ")"
         | IssueNumber n <- entryIssues
         ] ++
-        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/pull/" ++ show n
+        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/pull/" ++ show n ++ ")"
         | IssueNumber n <- entryPrs
         ]
 
