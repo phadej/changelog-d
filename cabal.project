@@ -1,0 +1,5 @@
+packages: .
+tests: true
+
+package changelog-d
+  ghc-options: -Wall

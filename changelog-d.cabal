@@ -1,0 +1,74 @@
+cabal-version:      2.2
+name:               changelog-d
+version:            0.1
+synopsis:           Concatenate changelog entries into a single one.
+category:           Development
+description:
+  Concate changelog entries into a single file.
+  .
+  Short usage guide:
+  .
+
+license:            GPL-3.0-or-later
+license-file:       LICENSE
+author:             Oleg Grenrus <oleg.grenrus@iki.fi>
+maintainer:         Oleg Grenrus <oleg.grenrus@iki.fi>
+tested-with:        GHC ==8.4.4 || ==8.6.5 || ==8.8.1
+extra-source-files: Changelog.md
+
+source-repository head
+  type:     git
+  location: https://github.com/phadej/changelog-d.git
+
+library changelog-d-internal
+  default-language: Haskell2010
+  hs-source-dirs:   src
+
+  -- GHC boot libraries
+  build-depends:
+    , base        ^>=4.11.1.0 || ^>=4.12.0.0 || ^>=4.13.0.0
+    , bytestring  ^>=0.10.8.2
+    , Cabal       ^>=3.0.0.0
+    , containers  ^>=0.5.11.0 || ^>=0.6.0.1
+    , directory   ^>=1.3.1.5
+    , filepath    ^>=1.4.2
+    , mtl         ^>=2.2.2
+    , parsec      ^>=3.1.13.0
+    , pretty      ^>=1.1.3.6
+
+  -- other-dependencies
+  build-depends:    generic-lens ^>=1.2.0.0
+
+  -- changelog-d: expand src
+  exposed-modules:
+    ChangelogD
+    ParsecError
+    ParsecUtils
+
+  other-extensions:
+    DeriveFunctor
+    DerivingStrategies
+    ExistentialQuantification
+    FlexibleContexts
+    GeneralizedNewtypeDeriving
+    OverloadedStrings
+    RankNTypes
+    ScopedTypeVariables
+
+executable changelog-d
+  default-language: Haskell2010
+  hs-source-dirs:   cli
+  main-is:          Main.hs
+  other-modules:    Paths_changelog_d
+  autogen-modules:  Paths_changelog_d
+
+  -- dependencies in library
+  build-depends:
+    , base
+    , bytestring
+    , changelog-d-internal
+    , directory
+    , filepath
+
+  -- extra dependencies
+  build-depends:    optparse-applicative >=0.14.3.0 && <0.16
