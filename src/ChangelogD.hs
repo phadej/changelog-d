@@ -1,8 +1,11 @@
-{-# LANGUAGE DeriveGeneric     #-}
-{-# LANGUAGE FlexibleContexts  #-}
-{-# LANGUAGE OverloadedLabels  #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RecordWildCards   #-}
+{-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE DeriveGeneric       #-}
+{-# LANGUAGE DerivingStrategies  #-}
+{-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE OverloadedLabels    #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wall #-}
 -- |
 -- License: GPL-3.0-or-later
@@ -13,22 +16,26 @@
 --
 module ChangelogD (makeChangelog, Opts (..)) where
 
-import Control.Exception (Exception (..))
-import Data.Char         (isSpace)
-import Data.Foldable     (for_, traverse_)
-import Data.Function     (on)
-import Data.List         (nub, sort, sortBy)
-import Data.Traversable  (for)
-import GHC.Generics      (Generic)
-import System.Directory  (listDirectory)
-import System.Exit       (exitFailure)
-import System.FilePath   ((</>))
-import System.IO         (hPutStrLn, stderr)
+import Control.Exception     (Exception (..))
+import Data.Char             (isSpace)
+import Data.Foldable         (for_, traverse_)
+import Data.Function         (on)
+import Data.Functor.Identity (Identity (..))
+import Data.List             (sort, sortBy)
+import Data.Proxy            (Proxy (..))
+import Data.Set              (Set)
+import Data.Traversable      (for)
+import GHC.Generics          (Generic)
+import System.Directory      (listDirectory)
+import System.Exit           (exitFailure)
+import System.FilePath       ((</>))
+import System.IO             (hPutStrLn, stderr)
 
 import qualified Data.ByteString                 as BS
 import qualified Data.Set                        as Set
 import qualified Distribution.CabalSpecVersion   as C
 import qualified Distribution.Compat.CharParsing as P
+import qualified Distribution.Compat.Newtype     as C
 import qualified Distribution.FieldGrammar       as C
 import qualified Distribution.Fields             as C
 import qualified Distribution.Parsec             as C
@@ -82,13 +89,8 @@ isTmpFile :: FilePath -> Bool
 isTmpFile ('.' : _) = True
 isTmpFile _ = False
 
-packagesCmp :: [C.PackageName] -> [C.PackageName] -> Ordering
-packagesCmp xs ys =
-    compare (length xs') (length ys') <> compare xs' ys'
-  where
-    xs' = Set.fromList xs
-    ys' = Set.fromList ys
--- packagesCmp ::
+packagesCmp :: Set C.PackageName -> Set C.PackageName -> Ordering
+packagesCmp xs ys = compare (length xs) (length ys) <> compare xs ys
 
 -------------------------------------------------------------------------------
 -- Formatting
@@ -106,13 +108,13 @@ formatEntry Entry {..} =
         [ pkgs ++ entrySynopsis
         ] ++
         [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/issues/" ++ show n ++ ")"
-        | IssueNumber n <- entryIssues
+        | IssueNumber n <- Set.toList entryIssues
         ] ++
         [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/pull/" ++ show n ++ ")"
-        | IssueNumber n <- entryPrs
+        | IssueNumber n <- Set.toList entryPrs
         ]
 
-    pkgs = concatMap (\pn -> "*" ++ C.unPackageName pn ++ "* ") $ nub $ sort entryPackages
+    pkgs = concatMap (\pn -> "*" ++ C.unPackageName pn ++ "* ") $ Set.toList entryPackages
 
     description = maybe "" (\d -> "\n" ++ trim d ++ "\n") entryDescription
 
@@ -155,7 +157,7 @@ instance C.Pretty Significance where
     pretty Other       = PP.text "other"
 
 newtype IssueNumber = IssueNumber Int
-  deriving (Eq, Show)
+  deriving (Eq, Ord, Show)
 
 instance C.Parsec IssueNumber where
     parsec = do
@@ -172,9 +174,9 @@ instance C.Pretty IssueNumber where
 data Entry = Entry
     { entrySynopsis     :: String
     , entryDescription  :: Maybe String
-    , entryPackages     :: [C.PackageName]
-    , entryPrs          :: [IssueNumber]
-    , entryIssues       :: [IssueNumber]
+    , entryPackages     :: Set C.PackageName
+    , entryPrs          :: Set IssueNumber
+    , entryIssues       :: Set IssueNumber
     , entrySignificance :: Significance
     }
   deriving (Show, Generic)
@@ -192,9 +194,33 @@ parseEntry fields0 = do
 
 entryGrammar :: C.ParsecFieldGrammar Entry Entry
 entryGrammar = Entry
-    <$> C.freeTextFieldDef "synopsis"                               #entrySynopsis
-    <*> C.freeTextField    "description"                            #entryDescription
-    <*> C.monoidalFieldAla "packages"     (C.alaList C.NoCommaFSep) #entryPackages
-    <*> C.monoidalFieldAla "prs"          (C.alaList C.NoCommaFSep) #entryPrs
-    <*> C.monoidalFieldAla "issues"       (C.alaList C.NoCommaFSep) #entryIssues
-    <*> C.optionalFieldDef "significance"                           #entrySignificance Other
+    <$> C.freeTextFieldDef "synopsis"                            #entrySynopsis
+    <*> C.freeTextField    "description"                         #entryDescription
+    <*> C.monoidalFieldAla "packages"     (alaSet C.NoCommaFSep) #entryPackages
+    <*> C.monoidalFieldAla "prs"          (alaSet C.NoCommaFSep) #entryPrs
+    <*> C.monoidalFieldAla "issues"       (alaSet C.NoCommaFSep) #entryIssues
+    <*> C.optionalFieldDef "significance"                        #entrySignificance Other
+
+-------------------------------------------------------------------------------
+-- AlaSet
+-------------------------------------------------------------------------------
+
+newtype AlaSet sep b a = AlaSet { _getAlaSet :: Set a }
+  deriving anyclass (C.Newtype (Set a))
+
+alaSet :: sep -> Set a -> AlaSet sep (Identity a) a
+alaSet _ = AlaSet
+
+-- | More general version of 'alaSet'.
+_alaSet' :: sep -> (a -> b) -> Set a -> AlaSet sep b a
+_alaSet' _ _ = AlaSet
+
+instance (C.Newtype a b, Ord a, C.Sep sep, C.Parsec b) => C.Parsec (AlaSet sep b a) where
+    parsec   = C.pack . Set.fromList . map (C.unpack :: b -> a) <$> C.parseSep (hack (Proxy :: Proxy sep)) C.parsec
+
+instance (C.Newtype a b, C.Sep sep, C.Pretty b) => C.Pretty (AlaSet sep b a) where
+    pretty = C.prettySep (hack (Proxy :: Proxy sep)) . map (C.pretty . (C.pack :: a -> b)) . Set.toList . C.unpack
+
+-- Someone (= me) forgot to export Distribution.Parsec.Newtypes.P
+hack :: Proxy a -> proxy a
+hack _ = undefined
