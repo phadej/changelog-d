@@ -13,17 +13,20 @@
 --
 module ChangelogD (makeChangelog, Opts (..)) where
 
-import Data.Char        (isSpace)
-import Data.Foldable    (for_, traverse_)
-import Data.List        (sort, sortBy, nub, isSuffixOf)
-import Data.Traversable (for)
-import GHC.Generics     (Generic)
-import System.Directory (listDirectory)
-import System.FilePath  ((</>))
-import Data.Function (on)
+import Control.Exception (Exception (..))
+import Data.Char         (isSpace)
+import Data.Foldable     (for_, traverse_)
+import Data.Function     (on)
+import Data.List         (nub, sort, sortBy)
+import Data.Traversable  (for)
+import GHC.Generics      (Generic)
+import System.Directory  (listDirectory)
+import System.Exit       (exitFailure)
+import System.FilePath   ((</>))
+import System.IO         (hPutStrLn, stderr)
 
-import qualified Data.Set as Set
 import qualified Data.ByteString                 as BS
+import qualified Data.Set                        as Set
 import qualified Distribution.CabalSpecVersion   as C
 import qualified Distribution.Compat.CharParsing as P
 import qualified Distribution.FieldGrammar       as C
@@ -37,15 +40,21 @@ import qualified Text.PrettyPrint                as PP
 
 import Data.Generics.Labels ()
 
-import ParsecUtils
+import Cabal.Parse
+
+exitWithExc :: Exception e => e -> IO a
+exitWithExc e = do
+    hPutStrLn stderr $ displayException e
+    exitFailure
 
 makeChangelog :: Opts -> IO ()
 makeChangelog Opts {..} = do
     existingContents <- traverse BS.readFile optExisting
     dirContents <- filter (not . isTmpFile) <$> listDirectory optDirectory
     entries <- for (sort dirContents) $ \name -> do
-        entry <- readAndParseFile parseEntry $ optDirectory </> name
-        return entry
+        let fp = optDirectory </> name
+        contents <- BS.readFile fp
+        either exitWithExc return $ parseWith parseEntry fp contents
 
     if null entries
     then traverse_ BS.putStr existingContents
@@ -79,7 +88,7 @@ packagesCmp xs ys =
   where
     xs' = Set.fromList xs
     ys' = Set.fromList ys
--- packagesCmp :: 
+-- packagesCmp ::
 
 -------------------------------------------------------------------------------
 -- Formatting

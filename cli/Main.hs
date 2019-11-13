@@ -6,7 +6,6 @@ module Main (main) where
 import Control.Applicative ((<**>), optional)
 import Data.Version        (showVersion)
 
-import qualified Data.ByteString     as BS
 import qualified Options.Applicative as O
 
 import ChangelogD (makeChangelog, Opts (..))
