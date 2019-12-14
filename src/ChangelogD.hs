@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveAnyClass      #-}
+  {-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
@@ -17,6 +17,7 @@
 module ChangelogD (makeChangelog, Opts (..)) where
 
 import Control.Exception     (Exception (..))
+import Control.Monad         (when)
 import Data.Char             (isSpace)
 import Data.Foldable         (for_, traverse_)
 import Data.Function         (on)
@@ -63,7 +64,7 @@ makeChangelog Opts {..} = do
 
     existingContents <- traverse BS.readFile optExisting
     dirContents <- filter (not . isTmpFile) <$> listDirectory optDirectory
-    entries <- for (sort dirContents) $ \name -> do
+    entries <- for (filter (/= "config") $ sort dirContents) $ \name -> do
         let fp = optDirectory </> name
         contents <- BS.readFile fp
         either exitWithExc return $ Parse.parseWith parseEntry fp contents
@@ -221,7 +222,9 @@ hasDescription = isJust . entryDescription
 parseEntry :: [C.Field C.Position] -> C.ParseResult Entry
 parseEntry fields0 = do
     traverse_ parseSection $ concat sections
-    C.parseFieldGrammar C.cabalSpecLatest fields entryGrammar
+    e <- C.parseFieldGrammar C.cabalSpecLatest fields entryGrammar
+    when (null $ entrySynopsis e) $ fail "Synopsis cannot be empty"
+    return e
   where
     (fields, sections) = C.partitionFields fields0
 
