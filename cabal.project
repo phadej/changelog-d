@@ -3,9 +3,3 @@ tests: true
 
 package changelog-d
   ghc-options: -Wall
-
-source-repository-package
- type: git
- location: https://github.com/haskell-CI/haskell-ci.git
- tag: fd12b50dd9055604d8af4e0f93d06ac36bc3597a
- subdir: cabal-parsers

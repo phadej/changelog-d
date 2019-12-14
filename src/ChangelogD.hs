@@ -22,6 +22,7 @@ import Data.Foldable         (for_, traverse_)
 import Data.Function         (on)
 import Data.Functor.Identity (Identity (..))
 import Data.List             (sort, sortBy)
+import Data.Maybe            (isJust)
 import Data.Proxy            (Proxy (..))
 import Data.Set              (Set)
 import Data.Traversable      (for)
@@ -31,6 +32,7 @@ import System.Exit           (exitFailure)
 import System.FilePath       ((</>))
 import System.IO             (hPutStrLn, stderr)
 
+import qualified Cabal.Parse                     as Parse
 import qualified Data.ByteString                 as BS
 import qualified Data.Set                        as Set
 import qualified Distribution.CabalSpecVersion   as C
@@ -47,8 +49,6 @@ import qualified Text.PrettyPrint                as PP
 
 import Data.Generics.Labels ()
 
-import Cabal.Parse
-
 exitWithExc :: Exception e => e -> IO a
 exitWithExc e = do
     hPutStrLn stderr $ displayException e
@@ -56,12 +56,17 @@ exitWithExc e = do
 
 makeChangelog :: Opts -> IO ()
 makeChangelog Opts {..} = do
+    cfg <- do
+        let filename = optDirectory </> "config"
+        contents <- BS.readFile filename
+        either exitWithExc return $ Parse.parseWith parseConfig filename contents
+
     existingContents <- traverse BS.readFile optExisting
     dirContents <- filter (not . isTmpFile) <$> listDirectory optDirectory
     entries <- for (sort dirContents) $ \name -> do
         let fp = optDirectory </> name
         contents <- BS.readFile fp
-        either exitWithExc return $ parseWith parseEntry fp contents
+        either exitWithExc return $ Parse.parseWith parseEntry fp contents
 
     if null entries
     then traverse_ BS.putStr existingContents
@@ -71,17 +76,17 @@ makeChangelog Opts {..} = do
         if null significant
         then
             for_ entries $ \entry ->
-                putStr $ formatEntry entry
+                putStr $ formatEntry cfg entry
         else do
             putStrLn "### Significant changes\n"
 
-            for_ (sortBy (packagesCmp `on` entryPackages) significant) $ \entry ->
-                putStr $ formatEntry entry
+            for_ (sortBy ((packagesCmp `on` entryPackages) <> (flip compare `on` hasDescription)) significant) $ \entry ->
+                putStr $ formatEntry cfg entry
 
             putStrLn "### Other changes\n"
 
-            for_ other $ \entry ->
-                putStr $ formatEntry entry
+            for_ (sortBy (flip compare `on` hasDescription) other) $ \entry ->
+                putStr $ formatEntry cfg entry
 
         traverse_ BS.putStr existingContents
 
@@ -96,29 +101,32 @@ packagesCmp xs ys = compare (length xs) (length ys) <> compare xs ys
 -- Formatting
 -------------------------------------------------------------------------------
 
-formatEntry :: Entry -> String
-formatEntry Entry {..} =
-    indent $ header ++ "\n" ++ description ++ "\n"
+formatEntry :: Cfg -> Entry -> String
+formatEntry cfg Entry {..} =
+    indent $ header ++ "\n" ++ description
   where
     indent = unlines . indent' . lines
     indent' []     = []
     indent' (x:xs) = ("- " ++ x) : map ("  " ++) xs
 
+    github = "https://github.com/" ++ cfgOrganization cfg ++ "/" ++ cfgRepository cfg
+
     header = unwords $
         [ pkgs ++ entrySynopsis
         ] ++
-        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/issues/" ++ show n ++ ")"
+        [ "[#" ++ show n ++ "](" ++ github ++ "/issues/" ++ show n ++ ")"
         | IssueNumber n <- Set.toList entryIssues
         ] ++
-        [ "[#" ++ show n ++ "](https://github.com/phadej/changelog-d/pull/" ++ show n ++ ")"
+        [ "[#" ++ show n ++ "](" ++ github ++ "/pull/" ++ show n ++ ")"
         | IssueNumber n <- Set.toList entryPrs
         ]
 
     pkgs = concatMap (\pn -> "*" ++ C.unPackageName pn ++ "* ") $ Set.toList entryPackages
 
-    description = maybe "" (\d -> "\n" ++ trim d ++ "\n") entryDescription
+    description = maybe "" (\d -> "\n" ++ trim d ++ "\n\n") entryDescription
 
-    trim = dropWhile isSpace . reverse .  dropWhile isSpace . reverse
+trim :: String -> String
+trim = tr . tr where tr = dropWhile isSpace . reverse
 
 -------------------------------------------------------------------------------
 -- Options
@@ -168,6 +176,32 @@ instance C.Pretty IssueNumber where
     pretty (IssueNumber n) = PP.char '#' PP.<> PP.int n
 
 -------------------------------------------------------------------------------
+-- Config
+-------------------------------------------------------------------------------
+
+data Cfg = Cfg
+    { cfgOrganization :: String
+    , cfgRepository   :: String
+    }
+  deriving (Show, Generic)
+
+parseConfig :: [C.Field C.Position] -> C.ParseResult Cfg
+parseConfig fields0 = do
+    traverse_ parseSection $ concat sections
+    C.parseFieldGrammar C.cabalSpecLatest fields cfgGrammar
+  where
+    (fields, sections) = C.partitionFields fields0
+
+    parseSection :: C.Section C.Position -> C.ParseResult ()
+    parseSection (C.MkSection (C.Name pos name) _ _) =
+        C.parseWarning pos C.PWTUnknownSection $ "Unknown section " ++ C.fromUTF8BS name
+
+cfgGrammar :: C.ParsecFieldGrammar Cfg Cfg
+cfgGrammar = Cfg
+    <$> C.uniqueFieldAla   "organization" C.Token #cfgOrganization
+    <*> C.uniqueFieldAla   "repository"   C.Token #cfgRepository
+
+-------------------------------------------------------------------------------
 -- Entry
 -------------------------------------------------------------------------------
 
@@ -180,6 +214,9 @@ data Entry = Entry
     , entrySignificance :: Significance
     }
   deriving (Show, Generic)
+
+hasDescription :: Entry -> Bool
+hasDescription = isJust . entryDescription
 
 parseEntry :: [C.Field C.Position] -> C.ParseResult Entry
 parseEntry fields0 = do
