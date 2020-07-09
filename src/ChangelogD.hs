@@ -1,11 +1,12 @@
-  {-# LANGUAGE DeriveAnyClass      #-}
+{-# LANGUAGE DataKinds           #-}
+{-# LANGUAGE DeriveAnyClass      #-}
 {-# LANGUAGE DeriveGeneric       #-}
 {-# LANGUAGE DerivingStrategies  #-}
 {-# LANGUAGE FlexibleContexts    #-}
-{-# LANGUAGE OverloadedLabels    #-}
 {-# LANGUAGE OverloadedStrings   #-}
 {-# LANGUAGE RecordWildCards     #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
 {-# OPTIONS_GHC -Wall #-}
 -- |
 -- License: GPL-3.0-or-later
@@ -16,22 +17,23 @@
 --
 module ChangelogD (makeChangelog, Opts (..)) where
 
-import Control.Exception     (Exception (..))
-import Control.Monad         (when)
-import Data.Char             (isSpace)
-import Data.Foldable         (for_, traverse_)
-import Data.Function         (on)
-import Data.Functor.Identity (Identity (..))
-import Data.List             (sort, sortBy)
-import Data.Maybe            (isJust)
-import Data.Proxy            (Proxy (..))
-import Data.Set              (Set)
-import Data.Traversable      (for)
-import GHC.Generics          (Generic)
-import System.Directory      (listDirectory)
-import System.Exit           (exitFailure)
-import System.FilePath       ((</>))
-import System.IO             (hPutStrLn, stderr)
+import Control.Exception       (Exception (..))
+import Control.Monad           (when)
+import Data.Char               (isSpace)
+import Data.Foldable           (for_, traverse_)
+import Data.Function           (on)
+import Data.Functor.Identity   (Identity (..))
+import Data.Generics.Lens.Lite (field)
+import Data.List               (sort, sortBy)
+import Data.Maybe              (isJust)
+import Data.Proxy              (Proxy (..))
+import Data.Set                (Set)
+import Data.Traversable        (for)
+import GHC.Generics            (Generic)
+import System.Directory        (listDirectory)
+import System.Exit             (exitFailure)
+import System.FilePath         ((</>))
+import System.IO               (hPutStrLn, stderr)
 
 import qualified Cabal.Parse                     as Parse
 import qualified Data.ByteString                 as BS
@@ -48,7 +50,6 @@ import qualified Distribution.Simple.Utils       as C
 import qualified Distribution.Types.PackageName  as C
 import qualified Text.PrettyPrint                as PP
 
-import Data.Generics.Labels ()
 
 exitWithExc :: Exception e => e -> IO a
 exitWithExc e = do
@@ -199,8 +200,8 @@ parseConfig fields0 = do
 
 cfgGrammar :: C.ParsecFieldGrammar Cfg Cfg
 cfgGrammar = Cfg
-    <$> C.uniqueFieldAla   "organization" C.Token #cfgOrganization
-    <*> C.uniqueFieldAla   "repository"   C.Token #cfgRepository
+    <$> C.uniqueFieldAla   "organization" C.Token (field @"cfgOrganization")
+    <*> C.uniqueFieldAla   "repository"   C.Token (field @"cfgRepository")
 
 -------------------------------------------------------------------------------
 -- Entry
@@ -223,7 +224,8 @@ parseEntry :: [C.Field C.Position] -> C.ParseResult Entry
 parseEntry fields0 = do
     traverse_ parseSection $ concat sections
     e <- C.parseFieldGrammar C.cabalSpecLatest fields entryGrammar
-    when (null $ entrySynopsis e) $ fail "Synopsis cannot be empty"
+    when (null $ entrySynopsis e) $
+        C.parseFatalFailure C.zeroPos "Synopsis cannot be empty"
     return e
   where
     (fields, sections) = C.partitionFields fields0
@@ -234,12 +236,12 @@ parseEntry fields0 = do
 
 entryGrammar :: C.ParsecFieldGrammar Entry Entry
 entryGrammar = Entry
-    <$> C.freeTextFieldDef "synopsis"                            #entrySynopsis
-    <*> C.freeTextField    "description"                         #entryDescription
-    <*> C.monoidalFieldAla "packages"     (alaSet C.NoCommaFSep) #entryPackages
-    <*> C.monoidalFieldAla "prs"          (alaSet C.NoCommaFSep) #entryPrs
-    <*> C.monoidalFieldAla "issues"       (alaSet C.NoCommaFSep) #entryIssues
-    <*> C.optionalFieldDef "significance"                        #entrySignificance Other
+    <$> C.freeTextFieldDef "synopsis"                            (field @"entrySynopsis")
+    <*> C.freeTextField    "description"                         (field @"entryDescription")
+    <*> C.monoidalFieldAla "packages"     (alaSet C.NoCommaFSep) (field @"entryPackages")
+    <*> C.monoidalFieldAla "prs"          (alaSet C.NoCommaFSep) (field @"entryPrs")
+    <*> C.monoidalFieldAla "issues"       (alaSet C.NoCommaFSep) (field @"entryIssues")
+    <*> C.optionalFieldDef "significance"                        (field @"entrySignificance") Other
 
 -------------------------------------------------------------------------------
 -- AlaSet

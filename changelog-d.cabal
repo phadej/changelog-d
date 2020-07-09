@@ -13,7 +13,7 @@ license:       GPL-3.0-or-later
 license-file:  LICENSE
 author:        Oleg Grenrus <oleg.grenrus@iki.fi>
 maintainer:    Oleg Grenrus <oleg.grenrus@iki.fi>
-tested-with:   GHC ==8.4.4 || ==8.6.5 || ==8.8.1
+tested-with:   GHC ==8.4.4 || ==8.6.5 || ==8.8.3 || ==8.10.1
 
 source-repository head
   type:     git
@@ -25,9 +25,9 @@ library changelog-d-internal
 
   -- GHC boot libraries
   build-depends:
-    , base        ^>=4.11.1.0 || ^>=4.12.0.0 || ^>=4.13.0.0
+    , base        ^>=4.11.1.0 || ^>=4.12.0.0 || ^>=4.13.0.0 || ^>=4.14.0.0
     , bytestring  ^>=0.10.8.2
-    , Cabal       ^>=3.0.0.0
+    , Cabal       ^>=3.2.0.0
     , containers  ^>=0.5.11.0 || ^>=0.6.0.1
     , directory   ^>=1.3.1.5
     , filepath    ^>=1.4.2
@@ -37,12 +37,14 @@ library changelog-d-internal
 
   -- extra dependencies
   build-depends:
-    , cabal-install-parsers  ^>=0.2
-    , generic-lens           ^>=1.2.0.0
+    , cabal-install-parsers  ^>=0.3
+    , generic-lens-lite      ^>=0.1
 
   -- changelog-d: expand src
   exposed-modules:  ChangelogD
   other-extensions:
+    DataKinds
+    DeriveAnyClass
     DeriveFunctor
     DerivingStrategies
     ExistentialQuantification
@@ -51,6 +53,7 @@ library changelog-d-internal
     OverloadedStrings
     RankNTypes
     ScopedTypeVariables
+    TypeApplications
 
 executable changelog-d
   default-language: Haskell2010
