@@ -39,6 +39,7 @@ library changelog-d-internal
   build-depends:
     , cabal-install-parsers  ^>=0.3
     , generic-lens-lite      ^>=0.1
+    , regex-applicative      ^>=0.3.3.1
 
   -- changelog-d: expand src
   exposed-modules:  ChangelogD
@@ -66,6 +67,7 @@ executable changelog-d
   build-depends:
     , base
     , bytestring
+    , Cabal
     , changelog-d-internal
     , directory
     , filepath

@@ -17,16 +17,15 @@
 --
 module ChangelogD (makeChangelog, Opts (..)) where
 
+import Control.Applicative     (some)
 import Control.Exception       (Exception (..))
-import Control.Monad           (when)
-import Data.Char               (isSpace)
+import Control.Monad           (unless, when)
+import Data.Char               (isDigit, isSpace)
 import Data.Foldable           (for_, traverse_)
 import Data.Function           (on)
-import Data.Functor.Identity   (Identity (..))
 import Data.Generics.Lens.Lite (field)
 import Data.List               (sort, sortBy)
-import Data.Maybe              (isJust)
-import Data.Proxy              (Proxy (..))
+import Data.Maybe              (isJust, mapMaybe)
 import Data.Set                (Set)
 import Data.Traversable        (for)
 import GHC.Generics            (Generic)
@@ -40,7 +39,6 @@ import qualified Data.ByteString                 as BS
 import qualified Data.Set                        as Set
 import qualified Distribution.CabalSpecVersion   as C
 import qualified Distribution.Compat.CharParsing as P
-import qualified Distribution.Compat.Newtype     as C
 import qualified Distribution.FieldGrammar       as C
 import qualified Distribution.Fields             as C
 import qualified Distribution.Parsec             as C
@@ -49,6 +47,7 @@ import qualified Distribution.Pretty             as C
 import qualified Distribution.Simple.Utils       as C
 import qualified Distribution.Types.PackageName  as C
 import qualified Text.PrettyPrint                as PP
+import qualified Text.Regex.Applicative          as RE
 
 
 exitWithExc :: Exception e => e -> IO a
@@ -57,40 +56,64 @@ exitWithExc e = do
     exitFailure
 
 makeChangelog :: Opts -> IO ()
-makeChangelog Opts {..} = do
+makeChangelog opts@Opts {..} = do
     cfg <- do
         let filename = optDirectory </> "config"
         contents <- BS.readFile filename
         either exitWithExc return $ Parse.parseWith parseConfig filename contents
 
-    existingContents <- traverse BS.readFile optExisting
     dirContents <- filter (not . isTmpFile) <$> listDirectory optDirectory
-    entries <- for (filter (/= "config") $ sort dirContents) $ \name -> do
+    entries0 <- for (filter (/= "config") $ sort dirContents) $ \name -> do
         let fp = optDirectory </> name
         contents <- BS.readFile fp
         either exitWithExc return $ Parse.parseWith parseEntry fp contents
 
-    if null entries
-    then traverse_ BS.putStr existingContents
-    else do
+    let entries = case optPackage of
+            Nothing -> entries0
+            Just pn -> filter (predicate pn) entries0
+          where
+            predicate pn e = Set.null (entryPackages e) || Set.member pn (entryPackages e)
+
+    for_ optPrList $ \prListFP -> do
+        ls <- lines <$> readFile prListFP
+
+        let re :: RE.RE Char Int
+            re = reAny *> "Merge pull request #" *> reIntegral <* " " <* reAny
+
+        let expected :: Set IssueNumber
+            expected = Set.fromList $ map IssueNumber $ mapMaybe (RE.match re) ls
+
+        let actual :: Set IssueNumber
+            actual = foldMap entryPrs entries
+
+        unless (expected == actual) $ do
+            let missing = expected `Set.difference` actual
+            unless (Set.null missing) $ do
+                hPutStrLn stderr "Missing PRs"
+                for_ missing $ \n -> hPutStrLn stderr $ "  - " ++ prUrl cfg n
+
+            let extra = actual `Set.difference` expected
+            unless (Set.null extra) $ do
+                hPutStrLn stderr "Extra (unmerged) PRs"
+                for_ extra $ \n -> hPutStrLn stderr $ "  - " ++ prUrl cfg n
+
+    unless (null entries) $ do
         let PerSignificance significant other = groupBySignificance entries
 
         if null significant
         then
             for_ entries $ \entry ->
-                putStr $ formatEntry cfg entry
+                putStr $ formatEntry opts cfg entry
         else do
             putStrLn "### Significant changes\n"
 
             for_ (sortBy ((packagesCmp `on` entryPackages) <> (flip compare `on` hasDescription)) significant) $ \entry ->
-                putStr $ formatEntry cfg entry
+                putStr $ formatEntry opts cfg entry
 
             putStrLn "### Other changes\n"
 
             for_ (sortBy (flip compare `on` hasDescription) other) $ \entry ->
-                putStr $ formatEntry cfg entry
-
-        traverse_ BS.putStr existingContents
+                putStr $ formatEntry opts cfg entry
 
 isTmpFile :: FilePath -> Bool
 isTmpFile ('.' : _) = True
@@ -103,15 +126,21 @@ packagesCmp xs ys = compare (length xs) (length ys) <> compare xs ys
 -- Formatting
 -------------------------------------------------------------------------------
 
-formatEntry :: Cfg -> Entry -> String
-formatEntry cfg Entry {..} =
+githubUrlPrefix :: Cfg -> String
+githubUrlPrefix cfg = "https://github.com/" ++ cfgOrganization cfg ++ "/" ++ cfgRepository cfg
+
+prUrl :: Cfg -> IssueNumber -> String
+prUrl cfg (IssueNumber n) = githubUrlPrefix cfg ++ "/pull/" ++ show n
+
+formatEntry :: Opts -> Cfg -> Entry -> String
+formatEntry Opts {..} cfg Entry {..} =
     indent $ header ++ "\n" ++ description
   where
     indent = unlines . indent' . lines
     indent' []     = []
     indent' (x:xs) = ("- " ++ x) : map ("  " ++) xs
 
-    github = "https://github.com/" ++ cfgOrganization cfg ++ "/" ++ cfgRepository cfg
+    github = githubUrlPrefix cfg
 
     header = unwords $
         [ pkgs ++ entrySynopsis
@@ -123,9 +152,15 @@ formatEntry cfg Entry {..} =
         | IssueNumber n <- Set.toList entryPrs
         ]
 
-    pkgs = concatMap (\pn -> "*" ++ C.unPackageName pn ++ "* ") $ Set.toList entryPackages
+    pkgs
+        | isJust optPackage = ""
+        | otherwise
+            = concatMap (\pn -> "*" ++ C.unPackageName pn ++ "* ")
+            $ Set.toList entryPackages
 
-    description = maybe "" (\d -> "\n" ++ trim d ++ "\n\n") entryDescription
+    description
+       | optShort  = ""
+       | otherwise = maybe "" (\d -> "\n" ++ trim d ++ "\n\n") entryDescription
 
 trim :: String -> String
 trim = tr . tr where tr = dropWhile isSpace . reverse
@@ -135,8 +170,10 @@ trim = tr . tr where tr = dropWhile isSpace . reverse
 -------------------------------------------------------------------------------
 
 data Opts = Opts
-    { optExisting  :: Maybe FilePath
-    , optDirectory :: FilePath
+    { optDirectory :: FilePath
+    , optShort     :: Bool
+    , optPackage   :: Maybe C.PackageName
+    , optPrList    :: Maybe FilePath
     }
   deriving (Show)
 
@@ -236,33 +273,19 @@ parseEntry fields0 = do
 
 entryGrammar :: C.ParsecFieldGrammar Entry Entry
 entryGrammar = Entry
-    <$> C.freeTextFieldDef "synopsis"                            (field @"entrySynopsis")
-    <*> C.freeTextField    "description"                         (field @"entryDescription")
-    <*> C.monoidalFieldAla "packages"     (alaSet C.NoCommaFSep) (field @"entryPackages")
-    <*> C.monoidalFieldAla "prs"          (alaSet C.NoCommaFSep) (field @"entryPrs")
-    <*> C.monoidalFieldAla "issues"       (alaSet C.NoCommaFSep) (field @"entryIssues")
-    <*> C.optionalFieldDef "significance"                        (field @"entrySignificance") Other
+    <$> C.freeTextFieldDef "synopsis"                              (field @"entrySynopsis")
+    <*> C.freeTextField    "description"                           (field @"entryDescription")
+    <*> C.monoidalFieldAla "packages"     (C.alaSet C.NoCommaFSep) (field @"entryPackages")
+    <*> C.monoidalFieldAla "prs"          (C.alaSet C.NoCommaFSep) (field @"entryPrs")
+    <*> C.monoidalFieldAla "issues"       (C.alaSet C.NoCommaFSep) (field @"entryIssues")
+    <*> C.optionalFieldDef "significance"                          (field @"entrySignificance") Other
 
 -------------------------------------------------------------------------------
--- AlaSet
+-- RE extras
 -------------------------------------------------------------------------------
 
-newtype AlaSet sep b a = AlaSet { _getAlaSet :: Set a }
-  deriving anyclass (C.Newtype (Set a))
+reIntegral :: RE.RE Char Int
+reIntegral = read <$> some (RE.psym isDigit)
 
-alaSet :: sep -> Set a -> AlaSet sep (Identity a) a
-alaSet _ = AlaSet
-
--- | More general version of 'alaSet'.
-_alaSet' :: sep -> (a -> b) -> Set a -> AlaSet sep b a
-_alaSet' _ _ = AlaSet
-
-instance (C.Newtype a b, Ord a, C.Sep sep, C.Parsec b) => C.Parsec (AlaSet sep b a) where
-    parsec   = C.pack . Set.fromList . map (C.unpack :: b -> a) <$> C.parseSep (hack (Proxy :: Proxy sep)) C.parsec
-
-instance (C.Newtype a b, C.Sep sep, C.Pretty b) => C.Pretty (AlaSet sep b a) where
-    pretty = C.prettySep (hack (Proxy :: Proxy sep)) . map (C.pretty . (C.pack :: a -> b)) . Set.toList . C.unpack
-
--- Someone (= me) forgot to export Distribution.Parsec.Newtypes.P
-hack :: Proxy a -> proxy a
-hack _ = undefined
+reAny :: RE.RE s [s]
+reAny = RE.few RE.anySym

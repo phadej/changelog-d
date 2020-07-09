@@ -3,12 +3,14 @@
 -- Copyright: Oleg Grenrus
 module Main (main) where
 
-import Control.Applicative ((<**>), optional)
+import Control.Applicative (optional, (<**>), (<|>))
 import Data.Version        (showVersion)
 
-import qualified Options.Applicative as O
+import qualified Distribution.Parsec            as C
+import qualified Distribution.Types.PackageName as C
+import qualified Options.Applicative            as O
 
-import ChangelogD (makeChangelog, Opts (..))
+import ChangelogD (Opts (..), makeChangelog)
 
 import Paths_changelog_d (version)
 
@@ -32,5 +34,20 @@ main = do
 
 optsP :: O.Parser Opts
 optsP = Opts
-    <$> optional (O.strOption (O.short 'o' <> O.long "old" <> O.metavar "Changelog" <> O.help "Existing changelog to concatenate"))
-    <*> O.strArgument (O.metavar "<changelog.d>" <> O.value "changelog.d" <> O.showDefault <> O.help "Changelog directory")
+    <$> O.strArgument (O.metavar "<changelog.d>" <> O.value "changelog.d" <> O.showDefault <> O.help "Changelog directory")
+    <*> shortP
+    <*> optional packageNameP
+    <*> optional prListP
+  where
+    shortP :: O.Parser Bool
+    shortP =
+        O.flag' True (O.long "short" <> O.help "Short output") <|>
+        O.flag' False (O.long "long" <> O.help "Long output (with descriptions") <|>
+        pure False
+
+    packageNameP :: O.Parser C.PackageName
+    packageNameP = O.option (O.eitherReader C.eitherParsec)
+        (O.long "package" <> O.metavar "<pkgname>" <> O.help "Package filter for")
+
+    prListP :: O.Parser FilePath
+    prListP = O.strOption (O.long "prlog" <> O.metavar "<prlog>" <> O.help "Git log to check which PRs are not mentioned")
